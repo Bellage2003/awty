@@ -1,13 +1,24 @@
 package edu.uw.ischool.gehuijun.awty
 
+import android.Manifest
+import android.app.Activity
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.widget.TextView
+import android.telephony.SmsManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -19,6 +30,11 @@ class MainActivity : AppCompatActivity() {
     private var intervalMinutes = 0
 
     private val handler = Handler(Looper.getMainLooper())
+    private val smsManager: SmsManager = SmsManager.getDefault()
+
+    companion object {
+        const val SMS_PERMISSION_REQUEST_CODE = 101
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,6 +52,19 @@ class MainActivity : AppCompatActivity() {
                 stopSendingMessages()
             }
         }
+
+        if (!checkPermission(Manifest.permission.RECEIVE_SMS)) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.RECEIVE_SMS),
+                SMS_PERMISSION_REQUEST_CODE
+            )
+        }
+    }
+
+    private fun checkPermission(permission: String): Boolean {
+        val permissionCheck = ContextCompat.checkSelfPermission(this, permission)
+        return (permissionCheck == PackageManager.PERMISSION_GRANTED)
     }
 
     private fun startSendingMessages() {
@@ -48,27 +77,20 @@ class MainActivity : AppCompatActivity() {
             isSending = true
             startButton.text = "Stop"
 
-            val runnable = object : Runnable {
-                override fun run() {
-                    if (isSending) {
-                        // Create custom Toast
-                        val toastView = layoutInflater.inflate(R.layout.custom_toast, null)
-                        val toastCaption = toastView.findViewById<TextView>(R.id.toastCaption)
-                        val toastMessage = toastView.findViewById<TextView>(R.id.toastMessage)
-
-                        toastCaption.text = "Texting $phoneNumber"
-                        toastMessage.text = message
-
-                        val toast = Toast(this@MainActivity)
-                        toast.duration = Toast.LENGTH_SHORT
-                        toast.view = toastView
-                        toast.show()
-                        handler.postDelayed(this, (intervalMinutes * 60 * 1000).toLong())
-                    }
-                }
+            // Request SMS permission
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.SEND_SMS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.SEND_SMS),
+                    SMS_PERMISSION_REQUEST_CODE
+                )
+            } else {
+                startSendingMessagesWithPermission(message, phoneNumber)
             }
-
-            handler.postDelayed(runnable, (intervalMinutes * 60 * 1000).toLong())
         } else {
             // Display a Toast explaining the issue
             Toast.makeText(
@@ -77,6 +99,54 @@ class MainActivity : AppCompatActivity() {
                 Toast.LENGTH_SHORT
             ).show()
         }
+    }
+
+    private fun startSendingMessagesWithPermission(message: String, phoneNumber: String) {
+        val sentIntent = PendingIntent.getBroadcast(
+            this@MainActivity,
+            0,
+            Intent("SMS_SENT"),
+            PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val deliveredIntent = PendingIntent.getBroadcast(
+            this@MainActivity,
+            0,
+            Intent("SMS_DELIVERED"),
+            PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        showToast("Sending messages started")
+
+        val runnable = object : Runnable {
+            override fun run() {
+                if (isSending) {
+                    // Send SMS
+                    smsManager.sendTextMessage(
+                        phoneNumber,
+                        null,
+                        message,
+                        sentIntent,
+                        deliveredIntent
+                    )
+
+                    // Create custom Toast
+                    val toastView = layoutInflater.inflate(R.layout.custom_toast, null)
+                    val toastCaption = toastView.findViewById<TextView>(R.id.toastCaption)
+                    val toastMessage = toastView.findViewById<TextView>(R.id.toastMessage)
+
+                    toastCaption.text = "Texting $phoneNumber"
+                    toastMessage.text = message
+
+                    val toast = Toast(this@MainActivity)
+                    toast.duration = Toast.LENGTH_SHORT
+                    toast.view = toastView
+                    toast.show()
+
+                    handler.postDelayed(this, (intervalMinutes * 60 * 1000).toLong())
+                }
+            }
+        }
+
+        handler.postDelayed(runnable, (intervalMinutes * 60 * 1000).toLong())
     }
 
     private fun stopSendingMessages() {
@@ -94,5 +164,10 @@ class MainActivity : AppCompatActivity() {
 
         return cleanedNumber
     }
-}
 
+    private fun showToast(message: String) {
+        runOnUiThread {
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+}
